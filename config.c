@@ -371,6 +371,13 @@ int read_config(const char *file, const char *uplink_interface, const char *plat
     Global_Clatd_Config.use_dynamic_iid = 1;
   }
 
+  if(!config_item_int16_t(root, "packet_burst", "10", &Global_Clatd_Config.packet_burst))
+    goto failed;
+
+  if (Global_Clatd_Config.packet_burst < 1 || Global_Clatd_Config.packet_burst > 50) {
+    logmsg(ANDROID_LOG_FATAL, "invalid value packet_burst %d", Global_Clatd_Config.packet_burst);
+  }
+
   return 1;
 
 failed:
@@ -392,4 +399,5 @@ void dump_config() {
   logmsg(ANDROID_LOG_DEBUG,"ipv4_local_prefixlen = %d", Global_Clatd_Config.ipv4_local_prefixlen);
   logmsg(ANDROID_LOG_DEBUG,"plat_subnet = %s",inet_ntop(AF_INET6, &Global_Clatd_Config.plat_subnet, charbuffer, sizeof(charbuffer)));
   logmsg(ANDROID_LOG_DEBUG,"default_pdp_interface = %s",Global_Clatd_Config.default_pdp_interface);
+  logmsg(ANDROID_LOG_DEBUG,"packet burst = %d",Global_Clatd_Config.packet_burst);
 }

@@ -333,39 +333,42 @@ void configure_interface(const char *uplink_interface, const char *plat_prefix, 
 void read_packet(int read_fd, int write_fd, int to_ipv6) {
   ssize_t readlen;
   uint8_t buf[PACKETLEN], *packet;
+  int numread = 0;
 
-  readlen = read(read_fd, buf, PACKETLEN);
+  do {
+    readlen = read(read_fd, buf, PACKETLEN);
 
-  if(readlen < 0) {
-    if (errno != EAGAIN) {
-      logmsg(ANDROID_LOG_WARN,"read_packet/read error: %s", strerror(errno));
+    if(readlen < 0) {
+      if (errno != EAGAIN) {
+        logmsg(ANDROID_LOG_WARN,"read_packet/read error: %s", strerror(errno));
+      }
+      return;
+    } else if(readlen == 0) {
+      logmsg(ANDROID_LOG_WARN,"read_packet/tun interface removed");
+      running = 0;
+      return;
     }
-    return;
-  } else if(readlen == 0) {
-    logmsg(ANDROID_LOG_WARN,"read_packet/tun interface removed");
-    running = 0;
-    return;
-  }
 
-  struct tun_pi *tun_header = (struct tun_pi *) buf;
-  if (readlen < (ssize_t) sizeof(*tun_header)) {
-    logmsg(ANDROID_LOG_WARN,"read_packet/short read: got %ld bytes", readlen);
-    return;
-  }
+    struct tun_pi *tun_header = (struct tun_pi *) buf;
+    if (readlen < (ssize_t) sizeof(*tun_header)) {
+      logmsg(ANDROID_LOG_WARN,"read_packet/short read: got %ld bytes", readlen);
+      return;
+    }
 
-  uint16_t proto = ntohs(tun_header->proto);
-  if (proto != ETH_P_IP) {
-    logmsg(ANDROID_LOG_WARN, "%s: unknown packet type = 0x%x", __func__, proto);
-    return;
-  }
+    uint16_t proto = ntohs(tun_header->proto);
+    if (proto != ETH_P_IP) {
+      logmsg(ANDROID_LOG_WARN, "%s: unknown packet type = 0x%x", __func__, proto);
+      return;
+    }
 
-  if(tun_header->flags != 0) {
-    logmsg(ANDROID_LOG_WARN, "%s: unexpected flags = %d", __func__, tun_header->flags);
-  }
+    if(tun_header->flags != 0) {
+      logmsg(ANDROID_LOG_WARN, "%s: unexpected flags = %d", __func__, tun_header->flags);
+    }
 
-  packet = (uint8_t *) (tun_header + 1);
-  readlen -= sizeof(*tun_header);
-  translate_packet(write_fd, to_ipv6, packet, readlen, TP_CSUM_NONE);
+    packet = (uint8_t *) (tun_header + 1);
+    readlen -= sizeof(*tun_header);
+    translate_packet(write_fd, to_ipv6, packet, readlen, TP_CSUM_NONE);
+  } while (++numread < Global_Clatd_Config.packet_burst);
 }
 
 /* function: recv_loop

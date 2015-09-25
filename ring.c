@@ -24,6 +24,7 @@
 #include <linux/if.h>
 #include <linux/if_packet.h>
 
+#include "config.h"
 #include "logging.h"
 #include "ring.h"
 #include "translate.h"
@@ -116,9 +117,10 @@ static struct tpacket2_hdr* ring_advance(struct packet_ring *ring) {
  * to_ipv6  - whether the packet is to be translated to ipv6 or ipv4
  */
 void ring_read(struct packet_ring *ring, int write_fd, int to_ipv6) {
+  int numread = 0;
   struct tpacket2_hdr *tp = ring->next;
   uint16_t val = TP_CSUM_NONE;
-  if (tp->tp_status & TP_STATUS_USER) {
+  while (tp->tp_status & TP_STATUS_USER && numread++ < Global_Clatd_Config.packet_burst) {
     //We expect only GRO coalesced packets to have TP_STATUS_CSUMNOTREADY
     //(ip_summed = CHECKSUM_PARTIAL) in this path. Note that these packets have already gone
     //through checksum validation in GRO engine. CHECKSUM_PARTIAL is defined to be 3 while

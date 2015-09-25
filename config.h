@@ -35,6 +35,7 @@ struct clat_config {
   char *default_pdp_interface;
   char *plat_from_dns64_hostname;
   int use_dynamic_iid;
+  int16_t packet_burst;
 };
 
 extern struct clat_config Global_Clatd_Config;
