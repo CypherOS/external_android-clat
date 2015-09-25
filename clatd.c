@@ -25,6 +25,7 @@
 #include <sys/stat.h>
 #include <string.h>
 #include <errno.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -367,14 +368,37 @@ void read_packet(int read_fd, int write_fd, int to_ipv6) {
   translate_packet(write_fd, to_ipv6, packet, readlen, TP_CSUM_NONE);
 }
 
+/* function: recv_loop
+ * reads packets from the packet socket and translates them
+ * tunnel - tun device data
+ */
+void *recv_loop(void *arg) {
+  struct tun_data *tunnel = (struct tun_data *) arg;
+  struct pollfd wait_fd[] = {
+    { tunnel->read_fd6, POLLIN, 0 },
+  };
+
+  while(running) {
+    if(poll(wait_fd, 1, NO_TRAFFIC_INTERFACE_POLL_FREQUENCY*1000) == -1) {
+      if(errno != EINTR) {
+        logmsg(ANDROID_LOG_WARN, "recv_loop/poll returned an error: %s",strerror(errno));
+      }
+    } else {
+      if (wait_fd[0].revents) {
+        ring_read(&tunnel->ring, tunnel->fd4, 0 /* to_ipv6 */);
+      }
+    }
+  }
+  return NULL;
+}
+
 /* function: event_loop
- * reads packets from the tun network interface and passes them down the stack
+ * reads packets from the tun interface and translates them. also monitors our upstream IP address
  * tunnel - tun device data
  */
 void event_loop(struct tun_data *tunnel) {
   time_t last_interface_poll;
   struct pollfd wait_fd[] = {
-    { tunnel->read_fd6, POLLIN, 0 },
     { tunnel->fd4, POLLIN, 0 },
   };
 
@@ -382,9 +406,9 @@ void event_loop(struct tun_data *tunnel) {
   last_interface_poll = time(NULL);
 
   while(running) {
-    if(poll(wait_fd, 2, NO_TRAFFIC_INTERFACE_POLL_FREQUENCY*1000) == -1) {
+    if(poll(wait_fd, 1, NO_TRAFFIC_INTERFACE_POLL_FREQUENCY*1000) == -1) {
       if(errno != EINTR) {
-        logmsg(ANDROID_LOG_WARN,"event_loop/poll returned an error: %s",strerror(errno));
+        logmsg(ANDROID_LOG_WARN, "event_loop/poll returned an error: %s",strerror(errno));
       }
     } else {
       // Call read_packet if the socket has data to be read, but also if an
@@ -393,9 +417,6 @@ void event_loop(struct tun_data *tunnel) {
       // causing this code to spin in a loop. Calling read() will clear the
       // socket error flag instead.
       if (wait_fd[0].revents) {
-        ring_read(&tunnel->ring, tunnel->fd4, 0 /* to_ipv6 */);
-      }
-      if (wait_fd[1].revents) {
         read_packet(tunnel->fd4, tunnel->write_fd6, 1 /* to_ipv6 */);
       }
     }
@@ -511,12 +532,21 @@ int main(int argc, char **argv) {
 
   update_clat_ipv6_address(&tunnel, uplink_interface);
 
-  // Loop until someone sends us a signal or brings down the tun interface.
+  // Stop when someone sends us a signal or brings down the tun interface.
   if(signal(SIGTERM, stop_loop) == SIG_ERR) {
     logmsg(ANDROID_LOG_FATAL, "sigterm handler failed: %s", strerror(errno));
     exit(1);
   }
 
+  // Start the receive thread.
+  int ret;
+  pthread_t recv_thread;
+  if ((ret = pthread_create(&recv_thread, NULL, recv_loop, (void *) &tunnel)) != 0) {
+    logmsg(ANDROID_LOG_FATAL, "creating receive thread failed: %s", strerror(ret));
+    exit(1);
+  }
+
+  // Run the event loop.
   event_loop(&tunnel);
 
   logmsg(ANDROID_LOG_INFO,"Shutting down clat on %s", uplink_interface);
